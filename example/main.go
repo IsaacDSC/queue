@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/IsaacDSC/queue/internal/redilson"
@@ -12,7 +13,8 @@ const channelName = "channelTest"
 
 func main() {
 	ctx := context.Background()
-	queue := redilson.NewQueue()
+	walFile := filepath.Join("tmp", "redilson.wal")
+	queue := redilson.NewQueue(walFile)
 
 	if err := queue.CreateChannel(ctx, channelName); err != nil && err != redilson.ErrAlreadyExistentChannel {
 		panic(err)

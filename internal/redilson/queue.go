@@ -18,11 +18,7 @@ type Queue struct {
 	queue map[string]*list.List
 }
 
-func NewQueue() *Queue {
-	return NewQueueWithWAL(walPath)
-}
-
-func NewQueueWithWAL(path string) *Queue {
+func NewQueue(path string) *Queue {
 	q := &Queue{wal: NewWal(path), queue: make(map[string]*list.List)}
 
 	// Restore in-memory only — writing to WAL here would duplicate records.

@@ -14,7 +14,7 @@ import (
 
 func TestEnqueueAndListen(t *testing.T) {
 	walFile := filepath.Join(t.TempDir(), "redilson.wal")
-	queue := redilson.NewQueueWithWAL(walFile)
+	queue := redilson.NewQueue(walFile)
 
 	const channelName = "channelTest"
 	ctx, cancel := context.WithCancel(context.Background())
