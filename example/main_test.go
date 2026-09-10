@@ -2,39 +2,58 @@ package main_test
 
 import (
 	"context"
-	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/IsaacDSC/queue/internal/redilson"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-const channelName = "channelTest"
+func TestEnqueueAndListen(t *testing.T) {
+	walFile := filepath.Join(t.TempDir(), "redilson.wal")
+	queue := redilson.NewQueueWithWAL(walFile)
 
-func TestX(t *testing.T) {
-	ctx := context.Background()
-	queue := redilson.NewQueue()
+	const channelName = "channelTest"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	if err := queue.CreateChannel(ctx, channelName); err != nil && err != redilson.ErrAlreadyExistentChannel {
-		panic(err)
-	}
+	require.NoError(t, queue.CreateChannel(ctx, channelName))
 
-	expecteds := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	handler := func(ctx context.Context, value any) error {
-		assert.Contains(t, expecteds, value)
-		fmt.Println(value)
-		return nil
-	}
+	expected := []any{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	received := make([]any, 0, len(expected))
+	var mu sync.Mutex
+	done := make(chan struct{})
 
 	go func() {
-		queue.Listener(ctx, channelName, handler)
+		_ = queue.Listener(ctx, channelName, func(ctx context.Context, value any) error {
+			mu.Lock()
+			received = append(received, value)
+			n := len(received)
+			mu.Unlock()
+
+			if n == len(expected) {
+				close(done)
+			}
+			return nil
+		})
 	}()
 
 	for i := range 10 {
-		queue.Enqueue(ctx, channelName, i)
+		require.NoError(t, queue.Enqueue(ctx, channelName, i))
 	}
 
-	time.Sleep(time.Second * 20)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for messages")
+	}
 
+	cancel()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, expected, received)
 }

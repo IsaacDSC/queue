@@ -16,19 +16,20 @@ const walPath = "tmp/redilson.wal"
 type WAL struct {
 	mu   sync.Mutex
 	file *os.File
+	path string
 }
 
-func NewWal() *WAL {
-	if err := os.MkdirAll(filepath.Dir(walPath), 0o755); err != nil {
+func NewWal(path string) *WAL {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		panic(err)
 	}
 
-	file, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		panic(err)
 	}
 
-	return &WAL{file: file}
+	return &WAL{file: file, path: path}
 }
 
 func (w *WAL) Load(fn func(Op Operation, channel string, value any) error) error {
@@ -60,7 +61,7 @@ func (w *WAL) replay() ([]string, map[string]*list.List, error) {
 		return nil, nil, err
 	}
 
-	file, err := os.Open(walPath)
+	file, err := os.Open(w.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil, nil

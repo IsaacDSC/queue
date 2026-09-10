@@ -14,9 +14,9 @@ func main() {
 	ctx := context.Background()
 	queue := redilson.NewQueue()
 
-	// if err := queue.CreateChannel(ctx, channelName); err != nil && err != redilson.ErrAlreadyExistentChannel {
-	// 	panic(err)
-	// }
+	if err := queue.CreateChannel(ctx, channelName); err != nil && err != redilson.ErrAlreadyExistentChannel {
+		panic(err)
+	}
 
 	handler := func(ctx context.Context, value any) error {
 		fmt.Println(value)
@@ -28,9 +28,10 @@ func main() {
 	}()
 
 	for i := range 10 {
-		queue.Enqueue(ctx, channelName, i)
+		if err := queue.Enqueue(ctx, channelName, i); err != nil {
+			panic(err)
+		}
 	}
 
-	time.Sleep(time.Second * 20)
-
+	time.Sleep(time.Second * 2)
 }

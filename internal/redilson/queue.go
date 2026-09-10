@@ -6,17 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/IsaacDSC/queue/pkg/date"
 )
 
 type Queue struct {
+	mu    sync.Mutex
 	wal   *WAL
 	queue map[string]*list.List
 }
 
 func NewQueue() *Queue {
-	q := &Queue{wal: NewWal(), queue: make(map[string]*list.List)}
+	return NewQueueWithWAL(walPath)
+}
+
+func NewQueueWithWAL(path string) *Queue {
+	q := &Queue{wal: NewWal(path), queue: make(map[string]*list.List)}
 
 	// Restore in-memory only — writing to WAL here would duplicate records.
 	if err := q.wal.Load(func(op Operation, channel string, value any) error {
@@ -37,9 +44,10 @@ func NewQueue() *Queue {
 var ErrAlreadyExistentChannel = errors.New("error when create because already exist")
 
 func (q *Queue) CreateChannel(ctx context.Context, name string) error {
-	_, ok := q.queue[name]
+	q.mu.Lock()
+	defer q.mu.Unlock()
 
-	if ok {
+	if _, ok := q.queue[name]; ok {
 		return ErrAlreadyExistentChannel
 	}
 
@@ -48,19 +56,20 @@ func (q *Queue) CreateChannel(ctx context.Context, name string) error {
 		Channel: name,
 		Ts:      date.Now(),
 	})
-
 	if err != nil {
 		return fmt.Errorf("error on write WAL, whith msg : %w", err)
 	}
 
 	q.queue[name] = list.New()
-
 	return nil
 }
 
 var ErrNotExistChannel = errors.New("error not exist this channel")
 
 func (q *Queue) Enqueue(ctx context.Context, channel string, value any) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	queue, ok := q.queue[channel]
 	if !ok {
 		return ErrNotExistChannel
@@ -72,30 +81,45 @@ func (q *Queue) Enqueue(ctx context.Context, channel string, value any) error {
 		Channel: channel,
 		Value:   value,
 	})
-
 	if err != nil {
 		return fmt.Errorf("error on write WAL, whith msg : %w", err)
 	}
 
 	queue.PushBack(value)
-
 	return nil
 }
 
 func (q *Queue) Listener(ctx context.Context, channel string, fn func(ctx context.Context, value any) error) error {
+	q.mu.Lock()
 	queue, ok := q.queue[channel]
-
+	q.mu.Unlock()
 	if !ok {
 		return ErrNotExistChannel
 	}
 
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		q.mu.Lock()
 		if queue.Len() == 0 {
+			q.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Millisecond):
+			}
 			continue
 		}
 
 		front := queue.Front()
-		if err := fn(ctx, front.Value); err != nil {
+		value := front.Value
+		q.mu.Unlock()
+
+		if err := fn(ctx, value); err != nil {
 			log.Println(err.Error())
 			continue
 		}
@@ -105,12 +129,15 @@ func (q *Queue) Listener(ctx context.Context, channel string, fn func(ctx contex
 			Ts:      date.Now(),
 			Channel: channel,
 		})
-
 		if err != nil {
-			panic(fmt.Errorf("error on write WAL, whith msg : %w", err))
+			return fmt.Errorf("error on write WAL, whith msg : %w", err)
 		}
 
-		queue.Remove(front)
+		q.mu.Lock()
+		// Re-check front in case the list changed; remove only if still present.
+		if queue.Front() == front {
+			queue.Remove(front)
+		}
+		q.mu.Unlock()
 	}
-
 }
